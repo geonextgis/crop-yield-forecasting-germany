@@ -160,7 +160,7 @@ cython_debug/
 #.idea/
 
 
-data*/
+data/
 src/*/*.ipynb
 logs/
 output/
@@ -169,7 +169,7 @@ temp/
 others/
 checkpoints/
 test/
-submit/
+optimization/
 *.sh
 *.txt
 *.out

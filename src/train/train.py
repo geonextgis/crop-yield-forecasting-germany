@@ -1,75 +1,55 @@
+import argparse
+import json
 import os
+import sys
 import time
+import uuid
 
-import config as cfg
+source_folder = "/beegfs/halder/GITHUB/RESEARCH/crop-yield-forecasting-germany/src"
+sys.path.append(source_folder)
+
+import config.winter_wheat as cfg
 import numpy as np
 import torch
-from config import tft_config, train_config
-from dataset import YieldFormerDataset
-from loss import MSELoss, QuantileLoss
-from model import YieldFormer
+from config.winter_wheat import model_config, train_config
+from dataset.dataset import CropFusionNetDataset
+from loss.loss import QuantileLoss
+from models.CropFusionNet.model import CropFusionNet
 from torch import nn
 from torch.optim import Adam
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from utils import set_seed
+from utils.utils import set_seed
 
-device = train_config["device"]
+device = model_config["device"]
 set_seed(42)
 
 
-# Datasets and dataloaders
-train_dataset = YieldFormerDataset(cfg, mode="train", scale=True, sample_grids=True)
-val_dataset = YieldFormerDataset(cfg, mode="val", scale=True, sample_grids=True)
+# Argument parser
+def parse_args():
+    parser = argparse.ArgumentParser(description="Hyperparameter Tuning")
 
-train_loader = DataLoader(
-    train_dataset,
-    batch_size=train_config["batch_size"],
-    shuffle=True,
-    num_workers=32,
-    pin_memory=True,
-    persistent_workers=True,
-    prefetch_factor=4,
-)
+    # 1. Identity & Logging
+    parser.add_argument(
+        "--job_id", type=str, default=str(uuid.uuid4())[:8], help="Unique Job ID"
+    )
+    parser.add_argument(
+        "--output_dir", type=str, default="./results", help="Where to save results"
+    )
 
-val_loader = DataLoader(
-    val_dataset,
-    batch_size=train_config["batch_size"],
-    shuffle=False,
-    num_workers=32,
-    pin_memory=True,
-    persistent_workers=True,
-    prefetch_factor=4,
-)
+    # 2. Hyperparameters to tune (add more as needed)
+    parser.add_argument("--lr", type=float, help="Learning Rate")
+    parser.add_argument("--batch_size", type=int, help="Batch Size")
+    parser.add_argument("--hidden_dim", type=int, help="LSTM Hidden Dimension")
+    parser.add_argument("--lstm_layers", type=int, help="LSTM Layers")
+    parser.add_argument("--attn_heads", type=int, help="Attention Heads")
+    parser.add_argument("--pooling_heads", type=int, help="Pooling Heads")
+    parser.add_argument("--embedding_dim", type=int, help="Embedding Dimension")
+    parser.add_argument("--dropout", type=float, help="Dropout Rate")
 
-
-# Model, optimizer, and loss
-model = YieldFormer(
-    tft_config,
-    hidden_dim=train_config["hidden_dim"],
-    quantiles=train_config["quantiles"],
-)
-model = nn.DataParallel(model).to(device)
-# criterion = QuantileLoss(quantiles=train_config["quantiles"]).to(train_config["device"])
-criterion = MSELoss(quantiles=train_config["quantiles"]).to(train_config["device"])
-optimizer = Adam(
-    model.parameters(), lr=train_config["lr"], weight_decay=train_config["weight_decay"]
-)
-num_epochs = train_config.get("num_epochs", 50)
-patience = train_config.get("early_stopping_patience", 10)
-batch_size = train_config.get("batch_size", 32)
-
-# Learning rate scheduler
-scheduler = ReduceLROnPlateau(
-    optimizer,
-    mode="min",  # minimize validation loss
-    factor=0.5,  # reduce LR by 50%
-    patience=3,  # wait for 3 epochs before reducing
-    threshold=1e-4,  # minimal improvement threshold
-    min_lr=1e-6,  # lower bound for learning rate
-)
+    return parser.parse_args()
 
 
 # Train function
@@ -84,26 +64,19 @@ def train_model(
     patience,
     scheduler=None,
     checkpoint_dir="checkpoints",
+    exp_name="CropFusionNet_experiment",
 ):
-    """
-    Performs the entire training, validation, and logging process.
-    Optimized for training with a full batch size per forward pass (no gradient accumulation needed).
-    """
-
-    # 1. Setup Logging & Checkpoints
+    # 1. Setup Logging
     timestamp = time.strftime("%Y%m%d-%H%M%S")
-    log_id = f"run_{timestamp}"
-
-    # TensorBoard logs
+    log_id = f"run_{exp_name}_{timestamp}"
     log_dir = os.path.join("runs", log_id)
     writer = SummaryWriter(log_dir=log_dir)
 
-    # Model Checkpoints folder: checkpoints/run_YYYYMMDD-HHMMSS/
     save_folder = os.path.join(checkpoint_dir, log_id)
     os.makedirs(save_folder, exist_ok=True)
 
     print(f"📘 TensorBoard logs: {log_dir}")
-    print(f"💾 Checkpoints will be saved to: {save_folder}")
+    print(f"💾 Checkpoints: {save_folder}")
 
     best_val_loss = np.inf
     epochs_no_improve = 0
@@ -112,128 +85,223 @@ def train_model(
     for epoch in range(1, num_epochs + 1):
         start_time = time.time()
 
-        # --- 1. Training Phase ---
+        # --- TRAINING PHASE ---
         model.train()
+        train_loss_accum = 0.0
 
-        # Trackers for separate losses
-        train_metrics = {"loss": 0.0}
-
-        # Optimization: Gradients are zeroed once per batch
-        for batch in tqdm(train_loader, desc=f"Epoch {epoch}/{num_epochs} [Train]"):
+        train_pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{num_epochs} [Train]")
+        for batch in train_pbar:
             optimizer.zero_grad()
 
-            # 1. Prepare Inputs (move entire batch to device)
-            batch_inputs = batch["inputs"].to(device)
-            batch_identifier = batch["identifier"].to(device)
-            batch_masks = batch["mask"].to(device)
-            batch_targets = batch["target"].to(device)
+            # Move inputs to device
+            inputs = {
+                "inputs": batch["inputs"].to(device),
+                "identifier": batch["identifier"].to(device),
+                "mask": batch["mask"].to(device),
+                "variable_mask": (
+                    batch.get("variable_mask").to(device)
+                    if batch.get("variable_mask") is not None
+                    else None
+                ),
+            }
+            targets = batch["target"].to(device)
 
-            batch_var_mask = batch.get("variable_mask")
-            if batch_var_mask is not None:
-                batch_var_mask = batch_var_mask.to(device)
+            # Forward Pass
+            output_dict = model(inputs)
+            preds = output_dict["prediction"]
 
-            preds = model(
-                {
-                    "inputs": batch_inputs,
-                    "identifier": batch_identifier,
-                    "mask": batch_masks,
-                    "variable_mask": batch_var_mask,
-                }
-            )
+            # Loss Calculation
+            loss = criterion(preds, targets)
 
-            # 3. Calculate Loss
-            loss = criterion(preds, batch_targets)
-
-            # 4. Backward Pass and Step
+            # Backward Pass
             loss.backward()
+
+            # Gradient Clipping
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
+
+            # Optimization Step
             optimizer.step()
 
-            train_metrics["loss"] += loss.item()
+            train_loss_accum += loss.item()
+            train_pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
-        # Calculate mean training loss over the entire dataset
-        train_loss = train_metrics["loss"] / len(train_loader)
+        avg_train_loss = train_loss_accum / len(train_loader)
 
-        # --- 2. Validation Phase ---
+        # --- VALIDATION PHASE ---
         model.eval()
-        val_metrics = {"loss": 0.0}
+        val_loss_accum = 0.0
 
         with torch.no_grad():
             for batch in tqdm(val_loader, desc="Validation"):
-                batch_inputs = batch["inputs"].to(device)
-                batch_identifier = batch["identifier"].to(device)
-                batch_masks = batch["mask"].to(device)
-                batch_targets = batch["target"].to(device)
+                inputs = {
+                    "inputs": batch["inputs"].to(device),
+                    "identifier": batch["identifier"].to(device),
+                    "mask": batch["mask"].to(device),
+                    "variable_mask": (
+                        batch.get("variable_mask").to(device)
+                        if batch.get("variable_mask") is not None
+                        else None
+                    ),
+                }
+                targets = batch["target"].to(device)
 
-                batch_var_mask = batch.get("variable_mask")
-                if batch_var_mask is not None:
-                    batch_var_mask = batch_var_mask.to(device)
+                output_dict = model(inputs)
+                preds = output_dict["prediction"]
 
-                preds = model(
-                    {
-                        "inputs": batch_inputs,
-                        "identifier": batch_identifier,
-                        "mask": batch_masks,
-                        "variable_mask": batch_var_mask,
-                    }
-                )
+                loss = criterion(preds, targets)
+                val_loss_accum += loss.item()
 
-                # Calculate Loss
-                loss = criterion(preds, batch_targets)
+        avg_val_loss = val_loss_accum / len(val_loader)
 
-                # Accumulate
-                val_metrics["loss"] += loss.item()
-
-        # Calculate mean validation loss over the entire dataset
-        val_loss = val_metrics["loss"] / len(val_loader)
-
-        # --- 3. Logging, Scheduling, and Early Stopping ---
+        # --- LOGGING & SCHEDULING ---
         elapsed = time.time() - start_time
         current_lr = optimizer.param_groups[0]["lr"]
 
         print(
-            f"Epoch {epoch:03d} | "
-            f"Train Loss: {train_loss:.4f} | "
-            f"Val Loss: {val_loss:.4f} | "
-            f"Time: {elapsed:.1f}s | LR: {current_lr:.2e}"
+            f"Epoch {epoch:03d} | Train: {avg_train_loss:.4f} | Val: {avg_val_loss:.4f} | LR: {current_lr:.2e} | T: {elapsed:.1f}s"
         )
 
-        # TensorBoard
-        writer.add_scalars("Loss", {"Train": train_loss, "Val": val_loss}, epoch)
-        writer.add_scalar("Learning_Rate", current_lr, epoch)
+        writer.add_scalars(
+            "Loss", {"Train": avg_train_loss, "Val": avg_val_loss}, epoch
+        )
+        writer.add_scalar("LR", current_lr, epoch)
 
-        # Scheduler Step
         if scheduler:
-            scheduler.step(val_loss)
+            scheduler.step(avg_val_loss)
 
-        # Early Stopping Logic
-        if val_loss < best_val_loss - 1e-4:
-            best_val_loss = val_loss
+        # Early Stopping
+        if avg_val_loss < best_val_loss - 1e-4:
+            best_val_loss = avg_val_loss
             epochs_no_improve = 0
             best_model_state = model.state_dict()
-
-            save_path = os.path.join(save_folder, "best_model.pt")
-            torch.save(best_model_state, save_path)
-            print(f"✨ New best val loss: {best_val_loss:.5f}. Model saved.")
+            torch.save(best_model_state, os.path.join(save_folder, "best_model.pt"))
+            print(f"✨ New best model saved.")
         else:
             epochs_no_improve += 1
             if epochs_no_improve >= patience:
-                print(f"⏹️ Early stopping triggered at epoch {epoch}")
+                print(f"⏹️ Early stopping at epoch {epoch}")
                 break
 
     writer.close()
-    print(f"Training complete. Best Val Loss: {best_val_loss:.5f}")
-    return best_model_state
+    return best_val_loss
 
 
 if __name__ == "__main__":
-    train_model(
-        model,
-        train_loader,
-        val_loader,
-        criterion,
-        optimizer,
-        device,
-        num_epochs,
-        patience,
-        scheduler,
+
+    # 1. Parse Arguments
+    args = parse_args()
+
+    # 2. UPDATE CONFIGURATION (Must be done FIRST)
+    if args.lr:
+        train_config["lr"] = args.lr
+    if args.batch_size:
+        train_config["batch_size"] = args.batch_size
+    if args.hidden_dim:
+        model_config["lstm_hidden_dimension"] = args.hidden_dim
+    if args.lstm_layers:
+        model_config["lstm_layers"] = args.lstm_layers
+    if args.attn_heads:
+        model_config["attn_heads"] = args.attn_heads
+    if args.pooling_heads:
+        model_config["pooling_heads"] = args.pooling_heads
+    if args.embedding_dim:
+        model_config["embedding_dim"] = args.embedding_dim
+    if args.dropout:
+        model_config["dropout"] = args.dropout
+
+    # Update experiment name
+    train_config["exp_name"] = f"{train_config.get('exp_name', 'exp')}_{args.job_id}"
+
+    print(f"🚀 Starting Job {args.job_id}")
+    print(f"   LR: {train_config['lr']}")
+    print(f"   Hidden: {model_config['lstm_hidden_dimension']}")
+    print(f"   Batch: {train_config['batch_size']}")
+
+    # ---------------------------------------------------------
+    # 3. INITIALIZE OBJECTS
+    # ---------------------------------------------------------
+
+    # Re-initialize Datasets & Loaders
+    train_dataset = CropFusionNetDataset(cfg, mode="train", scale=True)
+    val_dataset = CropFusionNetDataset(cfg, mode="val", scale=True)
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=train_config["batch_size"],
+        shuffle=True,
+        num_workers=16,
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=2,
     )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=train_config["batch_size"],
+        shuffle=False,
+        num_workers=16,
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=2,
+    )
+
+    # Re-initialize Model
+    model = CropFusionNet(model_config).to(device)
+
+    # Re-initialize Optimizer (to pick up new lr)
+    optimizer = Adam(
+        model.parameters(),
+        lr=train_config["lr"],
+        weight_decay=train_config.get("weight_decay", 1e-5),
+    )
+
+    # Re-initialize Scheduler
+    scheduler = ReduceLROnPlateau(
+        optimizer, mode="min", factor=0.5, patience=3, threshold=1e-4, min_lr=1e-6
+    )
+
+    criterion = QuantileLoss(quantiles=model_config["quantiles"]).to(device)
+
+    # ---------------------------------------------------------
+    # 4. RUN TRAINING
+    # ---------------------------------------------------------
+    best_val_loss = train_model(
+        model=model,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        criterion=criterion,
+        optimizer=optimizer,
+        device=device,
+        num_epochs=train_config.get("num_epochs", 50),
+        patience=train_config.get("early_stopping_patience", 10),
+        scheduler=scheduler,
+        exp_name=train_config["exp_name"],
+    )
+
+    # ---------------------------------------------------------
+    # 5. SAVE TUNING RESULTS
+    # ---------------------------------------------------------
+    results = {
+        "job_id": args.job_id,
+        "config": {
+            "lr": train_config["lr"],
+            "hidden_dim": model_config["lstm_hidden_dimension"],
+            "batch_size": train_config["batch_size"],
+            "lstm_layers": model_config.get("lstm_layers"),
+            "attn_heads": model_config.get("attn_heads"),
+            "pooling_heads": model_config.get("pooling_heads"),
+            "embedding_dim": model_config.get("embedding_dim"),
+            "dropout": model_config.get("dropout"),
+        },
+        "metrics": {
+            "best_val_loss": best_val_loss,
+        },
+    }
+
+    os.makedirs(args.output_dir, exist_ok=True)
+    save_path = os.path.join(args.output_dir, f"result_{args.job_id}.json")
+
+    with open(save_path, "w") as f:
+        json.dump(results, f, indent=4)
+
+    print(f"✅ Results saved to {save_path}")

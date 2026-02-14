@@ -3,17 +3,18 @@ import os
 
 import torch
 
+CROP = "winter_wheat"
 HARVEST_NEXT_YEAR = True
 
 ROOT_DATA_DIR = os.path.join(
-    "/beegfs/halder/GITHUB/RESEARCH/wheat-yield-forecasting-germany/data"
+    f"/beegfs/halder/GITHUB/RESEARCH/crop-yield-forecasting-germany/data/{CROP}"
 )
 SPLIT_FILE_PATH = os.path.join(ROOT_DATA_DIR, "train_test_val_split.csv")
 PHENOLOGY_FILE_PATH = os.path.join(ROOT_DATA_DIR, f"ww_phenology.csv")
 YIELD_FILE_PATH = os.path.join(ROOT_DATA_DIR, "yield.csv")
 TIMESERIES_PARQUET_DIR = os.path.join(ROOT_DATA_DIR, "timeseries_parquet_7D")
 STATIC_FILE_PATH = os.path.join(ROOT_DATA_DIR, "static.csv")
-SCALER_FILE_PATH = "/beegfs/halder/GITHUB/RESEARCH/wheat-yield-forecasting-germany/src/scaler/scaler.json"
+SCALER_FILE_PATH = f"/beegfs/halder/GITHUB/RESEARCH/crop-yield-forecasting-germany/src/scaler/scaler_{CROP}.json"
 
 # Define features
 soil_features = ["soil_quality_mean", "soil_quality_std"]
@@ -47,6 +48,18 @@ with open(SCALER_FILE_PATH, "r") as f:
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
+# Define forecasting scenarios
+forecast_scenarios = {
+    "Feb": 39,
+    "Mar": 44,
+    "Apr": 48,
+    "May": 53,
+    "Jun": 57,
+    "Jul": 61,
+    "Aug": 66,
+}
+forecast_month = "Jul"
+
 # Config for TFT
 model_config = {
     "device": device,
@@ -62,7 +75,7 @@ model_config = {
     "pooling_heads": 8,
     "dropout": 0.3,
     "embedding_dim": 16,
-    "seq_length": 66,  # [39=Feb, 44=March, 48=April, 53=May, 57=Jun, 61=Jul, 66=Aug],
+    "seq_length": forecast_scenarios[forecast_month],
     "quantiles": [0.1, 0.5, 0.9],
 }
 
@@ -72,6 +85,6 @@ train_config = {
     "lr": 1e-5,
     "weight_decay": 1e-5,
     "num_epochs": 500,
-    "early_stopping_patience": 20,
-    "exp_name": f"exp_{model_config['seq_length']}",
+    "early_stopping_patience": 10,
+    "exp_name": f"exp_{CROP}_{forecast_month}",
 }
