@@ -4,10 +4,6 @@ import torch.nn.functional as F
 
 
 class SimpleTransformer(nn.Module):
-    """
-    - Pure Attention (No LSTM)
-    - Standard Positional Encoding
-    """
 
     def __init__(self, config):
         super().__init__()
@@ -74,7 +70,7 @@ class SimpleTransformer(nn.Module):
         self.head = nn.Linear(self.hidden_size, len(self.quantiles))
 
     def forward(self, x):
-        # 1. Embed Features (Same logic as VanillaLSTM)
+        # 1. Embed Features
         s_embs = [
             l(x["identifier"][:, 0, i].long().to(self.device))
             for i, l in enumerate(self.static_emb)
@@ -112,13 +108,12 @@ class SimpleTransformer(nn.Module):
         x_in = x_in + self.pos_encoder[:, : x_in.size(1), :].to(self.device)
 
         # 4. Transformer Pass
-        # Masking padding if needed (optional based on your data)
         mask = x.get("mask")
         src_key_padding_mask = (mask == 0) if mask is not None else None
 
         out = self.transformer(x_in, src_key_padding_mask=src_key_padding_mask)
 
-        # 5. Pooling (Global Average for Transformers usually works better than last step)
+        # 5. Pooling
         out_pooled = out.mean(dim=1)
 
         return {"prediction": self.head(out_pooled)}

@@ -3,12 +3,6 @@ import torch.nn as nn
 
 
 class ResCNN(nn.Module):
-    """
-    Baseline 4: Residual 1D CNN (ResCNN)
-    - Captures local temporal patterns.
-    - Uses Residual connections for deep feature extraction.
-    - Global Average Pooling (GAP) for sequence summarization.
-    """
 
     def __init__(self, config):
         super().__init__()

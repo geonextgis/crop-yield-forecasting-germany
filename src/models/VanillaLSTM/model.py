@@ -3,13 +3,6 @@ import torch.nn as nn
 
 
 class VanillaLSTM(nn.Module):
-    """
-    Vanilla LSTM
-    - No Attention
-    - No Variable Selection
-    - No Gated Residuals
-    - Simple concatenation of static/temporal features
-    """
 
     def __init__(self, config):
         super().__init__()
@@ -72,7 +65,7 @@ class VanillaLSTM(nn.Module):
             l(x["identifier"][:, 0, i].long().to(self.device))
             for i, l in enumerate(self.static_emb)
         ]
-        # Map real vars to embedding dim (simple expansion)
+        # Map real vars to embedding dim
         s_reals = [
             x["identifier"][:, 0, self.static_cat_vars + i]
             .unsqueeze(-1)
@@ -106,5 +99,5 @@ class VanillaLSTM(nn.Module):
         x_in = self.input_proj(combined)
         out, _ = self.lstm(x_in)
 
-        # 5. Output (Last Step Only)
+        # 5. Output
         return {"prediction": self.head(out[:, -1, :])}
