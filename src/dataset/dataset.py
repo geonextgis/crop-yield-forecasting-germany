@@ -150,6 +150,65 @@ class CropFusionNetDataset(Dataset):
 
         return inputs, valid_mask, variable_mask
 
+    def get_sample_weights(self):
+        """
+        Calculates inverse-frequency weights to oversample extreme years.
+        Returns a Tensor of weights for WeightedRandomSampler.
+        """
+        print("⚖️  Calculating sample weights for balancing...")
+        targets = []
+
+        # Collect all targets
+        for idx in range(len(self.split_table)):
+            row = self.split_table.iloc[idx]
+            nuts_id = row["NUTS_ID"]
+            year = int(row["year"])
+
+            # Direct lookup from yield table
+            y = self.yield_table.loc[(nuts_id, year), self.config.target]
+            targets.append(y)
+
+        targets = np.array(targets)
+
+        # 2. Define "Extreme" (e.g., > 1 standard deviation from mean)
+        mean = np.mean(targets)
+        std = np.std(targets)
+        threshold = 1 * std
+
+        print(mean, std)
+
+        # 3. Categorize samples
+        # Class 0: Normal Yield | Class 1: Low Yield | Class 2: High Yield
+        is_low = targets < (mean - threshold)
+        is_high = targets > (mean + threshold)
+        is_normal = ~(is_low | is_high)
+
+        # 4. Calculate Weights (Inverse Frequency)
+        # Count how many samples are in each category
+        n_normal = np.sum(is_normal)
+        n_low = np.sum(is_low)
+        n_high = np.sum(is_high)
+
+        # Calculate weight: Total / (Num_Classes * Count)
+        # This gives higher numbers to rarer classes
+        total = len(targets)
+        w_normal = total / (3 * n_normal) if n_normal > 0 else 0
+        w_low = total / (3 * n_low) if n_low > 0 else 0
+        w_high = total / (3 * n_high) if n_high > 0 else 0
+
+        print(f"   Counts - Normal: {n_normal}, Low: {n_low}, High: {n_high}")
+        print(
+            f"   Weights - Normal: {w_normal:.2f}, Low: {w_low:.2f}, High: {w_high:.2f}"
+        )
+
+        # 5. Assign weight to each sample
+        weights = np.zeros_like(targets, dtype=np.float64)
+        weights[is_normal] = w_normal
+        weights[is_low] = w_low
+        weights[is_high] = w_high
+
+        return torch.DoubleTensor(weights)
+
     def __getitem__(self, idx: int) -> Dict[str, Union[torch.Tensor, str, int]]:
         """
         Retrieves a single sample from the dataset.

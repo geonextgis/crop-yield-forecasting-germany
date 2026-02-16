@@ -695,7 +695,7 @@ class CropFusionNet(nn.Module):
         # Fusing the Static Context into the Temporal Sequence
         attn_output = self.static_enrichment(attn_output, temporal_context)
 
-        # 4. Pooling & Output
+        # 5. Pooling & Output
         # ---------------------------------------------------------
         pooled_output, pooled_weights = self.multihead_pooling(
             attn_output, ~valid_mask.bool()
