@@ -428,7 +428,7 @@ class MultiHeadPooling(nn.Module):
 
 class CropFusionNet(nn.Module):
     """
-    CropFusionNet: A deep learning model for time-series forecasting with static and temporal features.
+    CropFusionNet: A deep learning model for end-season yield forecasting with static and temporal features.
 
     The model combines static and temporal embeddings, applies variable selection, processes sequences
     with LSTMs and Self Attention, enriches temporal features with static context, and performs pooling to generate predictions
