@@ -7,11 +7,11 @@ CROP = "winter_wheat"
 HARVEST_NEXT_YEAR = True
 
 ROOT_DATA_DIR = os.path.join(
-    f"/beegfs/halder/GITHUB/RESEARCH/crop-yield-forecasting-germany/data/{CROP}"
+    f"/beegfs/halder/GITHUB/RESEARCH/crop-yield-forecasting-germany/data/processed/{CROP}"
 )
 SPLIT_FILE_PATH = os.path.join(ROOT_DATA_DIR, "train_test_val_split.csv")
-PHENOLOGY_FILE_PATH = os.path.join(ROOT_DATA_DIR, f"ww_phenology.csv")
-YIELD_FILE_PATH = os.path.join(ROOT_DATA_DIR, "yield.csv")
+PHENOLOGY_FILE_PATH = os.path.join(ROOT_DATA_DIR, f"{CROP}_phenology.csv")
+YIELD_FILE_PATH = os.path.join(ROOT_DATA_DIR, f"{CROP}_yield.csv")
 TIMESERIES_PARQUET_DIR = os.path.join(ROOT_DATA_DIR, "timeseries_parquet_7D")
 STATIC_FILE_PATH = os.path.join(ROOT_DATA_DIR, "static.csv")
 SCALER_FILE_PATH = f"/beegfs/halder/GITHUB/RESEARCH/crop-yield-forecasting-germany/src/scaler/scaler_{CROP}.json"
