@@ -5,6 +5,7 @@ import torch
 
 CROP = "winter_wheat"
 HARVEST_NEXT_YEAR = True
+INTERVAL = "7D"
 
 ROOT_DATA_DIR = os.path.join(
     f"/beegfs/halder/GITHUB/RESEARCH/crop-yield-forecasting-germany/data/processed/{CROP}"
@@ -12,7 +13,7 @@ ROOT_DATA_DIR = os.path.join(
 SPLIT_FILE_PATH = os.path.join(ROOT_DATA_DIR, "train_test_val_split.csv")
 PHENOLOGY_FILE_PATH = os.path.join(ROOT_DATA_DIR, f"{CROP}_phenology.csv")
 YIELD_FILE_PATH = os.path.join(ROOT_DATA_DIR, f"{CROP}_yield.csv")
-TIMESERIES_PARQUET_DIR = os.path.join(ROOT_DATA_DIR, "timeseries_parquet_7D")
+TIMESERIES_PARQUET_DIR = os.path.join(ROOT_DATA_DIR, "timeseries")
 STATIC_FILE_PATH = os.path.join(ROOT_DATA_DIR, f"{CROP}_static.csv")
 SCALER_FILE_PATH = f"/beegfs/halder/GITHUB/RESEARCH/crop-yield-forecasting-germany/src/scaler/scaler_{CROP}.json"
 
@@ -51,13 +52,12 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Define forecasting scenarios
 forecast_scenarios = {
-    "Feb": 39,
-    "Mar": 44,
-    "Apr": 48,
-    "May": 53,
-    "Jun": 57,
-    "Jul": 61,
-    "Aug": 66,
+    "Mar": 40,
+    "Apr": 44,
+    "May": 48,
+    "Jun": 53,
+    "Jul": 57,
+    "Aug": 61,
 }
 forecast_month = "Jul"
 

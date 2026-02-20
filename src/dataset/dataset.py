@@ -36,6 +36,7 @@ class CropFusionNetDataset(Dataset):
         self.config = config
         self.mode = mode
         self.scale = scale
+        self.interval = self.config.INTERVAL
         self.seq_len = self.config.model_config.get("seq_length")
         self.parquet_dir = self.config.TIMESERIES_PARQUET_DIR
         self.harvest_next_year = self.config.HARVEST_NEXT_YEAR
@@ -66,9 +67,16 @@ class CropFusionNetDataset(Dataset):
         # ---------------- Load Phenology ----------------
         self.phenology_table = pd.read_csv(
             config.PHENOLOGY_FILE_PATH,
-            parse_dates=["Sowing_DOY", "Flowering_DOY", "Harvest_DOY"],
-        ).drop(columns=["STATE_ID"])
-        self.phenology_table.set_index(["STATE_NAME", "Year"], inplace=True)
+            usecols=[
+                "NUTS_ID",
+                "harvest_year",
+                "sowing_date",
+                "flowering_date",
+                "maturity_date",
+            ],
+            parse_dates=["sowing_date", "flowering_date", "maturity_date"],
+        )
+        self.phenology_table.set_index(["NUTS_ID", "harvest_year"], inplace=True)
 
         # ---------------- Load Static Features ----------------
         self.static_table = pd.read_csv(config.STATIC_FILE_PATH)
@@ -89,25 +97,25 @@ class CropFusionNetDataset(Dataset):
         """Returns the total number of samples in the dataset."""
         return len(self.split_table)
 
-    def _get_phenology_dates(self, nuts_name: str, year: int):
+    def _get_phenology_dates(self, nuts_id: str, year: int):
         """
-        Returns a dictionary with 'Sowing_DOY' and 'Harvest_DOY'.
+        Returns a tuple with 'sowing_date' and 'harvest_date'.
         If the specific year is missing, it calculates the median DOY from available years.
         """
-        idx = (nuts_name, year)
+        idx = (nuts_id, year)
 
         if idx in self.phenology_table.index:
             row = self.phenology_table.loc[idx]
-            sowing_date = pd.to_datetime(row["Sowing_DOY"])
-            harvest_date = pd.to_datetime(row["Harvest_DOY"])
+            sowing_date = pd.to_datetime(row["sowing_date"])
+            harvest_date = pd.to_datetime(row["maturity_date"])
 
             return (sowing_date, harvest_date)
 
         else:
             # Impute using median from available years
-            phen_dates = self.phenology_table.loc[nuts_name]
-            median_sowing_doy = phen_dates["Sowing_DOY"].dt.dayofyear.median()
-            median_harvest_doy = phen_dates["Harvest_DOY"].dt.dayofyear.median()
+            phen_dates = self.phenology_table.loc[nuts_id]
+            median_sowing_doy = phen_dates["sowing_date"].dt.dayofyear.median()
+            median_harvest_doy = phen_dates["maturity_date"].dt.dayofyear.median()
 
             # Determine Sowing Year
             if self.harvest_next_year:
@@ -226,7 +234,6 @@ class CropFusionNetDataset(Dataset):
         """
         row = self.split_table.loc[idx]
         nuts_id = row["NUTS_ID"]
-        nuts_name = row["NUTS_NAME"]
         year = int(row["year"])
 
         # ---------------- 1. Extract Target ----------------
@@ -239,11 +246,11 @@ class CropFusionNetDataset(Dataset):
             y = (y - self.target_mean) / self.target_std
 
         # ---------------- 2. Extract Phenology ----------------
-        sowing_date, harvest_date = self._get_phenology_dates(nuts_name, year)
+        sowing_date, harvest_date = self._get_phenology_dates(nuts_id, year)
 
         if (sowing_date is None) or (harvest_date is None):
             raise ValueError(
-                f"Phenology data missing and cannot be imputed for {nuts_name} in {year}"
+                f"Phenology data missing and cannot be imputed for {nuts_id} in {year}"
             )
 
         # ---------------- 3. Process Time-Series ----------------
@@ -267,6 +274,15 @@ class CropFusionNetDataset(Dataset):
             | (timeseries_data["date"] > harvest_date),
             self.config.remote_sensing_features,
         ] = np.nan
+
+        # Resample and average the timeseries into intervals
+        if self.interval:
+            timeseries_data = (
+                timeseries_data.set_index("date")
+                .resample(self.interval)
+                .mean()
+                .reset_index()
+            )
 
         # Extract real-valued features
         time_varying_real = timeseries_data[self.config.time_varying_real].values
