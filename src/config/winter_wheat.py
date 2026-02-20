@@ -13,12 +13,13 @@ SPLIT_FILE_PATH = os.path.join(ROOT_DATA_DIR, "train_test_val_split.csv")
 PHENOLOGY_FILE_PATH = os.path.join(ROOT_DATA_DIR, f"{CROP}_phenology.csv")
 YIELD_FILE_PATH = os.path.join(ROOT_DATA_DIR, f"{CROP}_yield.csv")
 TIMESERIES_PARQUET_DIR = os.path.join(ROOT_DATA_DIR, "timeseries_parquet_7D")
-STATIC_FILE_PATH = os.path.join(ROOT_DATA_DIR, "static.csv")
+STATIC_FILE_PATH = os.path.join(ROOT_DATA_DIR, f"{CROP}_static.csv")
 SCALER_FILE_PATH = f"/beegfs/halder/GITHUB/RESEARCH/crop-yield-forecasting-germany/src/scaler/scaler_{CROP}.json"
 
 # Define features
-soil_features = ["soil_quality_mean", "soil_quality_std"]
-topo_features = ["elev_mean", "slope_mean", "elev_std", "slope_std"]
+soil_features = ["soil_quality_mean", "soil_quality_stdDev"]
+topo_features = ["elevation_mean", "elevation_stdDev", "slope_mean", "slope_stdDev"]
+irrigation_features = ["irrigated_fraction"]
 
 remote_sensing_features = ["ndvi", "evi", "fpar", "lai"]
 climate_features = [
@@ -38,7 +39,7 @@ climate_features = [
 # Define variable names
 time_varying_real = remote_sensing_features + climate_features
 time_varying_categorical = []
-static_real_variables = soil_features + topo_features
+static_real_variables = soil_features + topo_features + irrigation_features
 static_categorical_variables = []
 target = "yield"
 
