@@ -3,8 +3,8 @@ import os
 
 import torch
 
-CROP = "winter_wheat"
-HARVEST_NEXT_YEAR = True
+CROP = "silage_maize"
+HARVEST_NEXT_YEAR = False
 
 ROOT_DATA_DIR = os.path.join(
     f"/beegfs/halder/GITHUB/RESEARCH/crop-yield-forecasting-germany/data/processed/{CROP}"
@@ -51,12 +51,11 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Define forecasting scenarios
 forecast_scenarios = {
-    "Mar": 274,
-    "Apr": 304,
-    "May": 335,
-    "Jun": 365,
-    "Jul": 396,
-    "Aug": 427,
+    "May": 151,
+    "Jun": 181,
+    "Jul": 212,
+    "Aug": 243,
+    "Sep": 273,
 }
 forecast_month = "Jul"
 

@@ -3,7 +3,7 @@ import os
 
 import torch
 
-CROP = "winter_wheat"
+CROP = "winter_rye"
 HARVEST_NEXT_YEAR = True
 
 ROOT_DATA_DIR = os.path.join(
@@ -51,14 +51,14 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Define forecasting scenarios
 forecast_scenarios = {
-    "Mar": 274,
-    "Apr": 304,
-    "May": 335,
-    "Jun": 365,
-    "Jul": 396,
-    "Aug": 427,
+    "Mar": 304,
+    "Apr": 334,
+    "May": 365,
+    "Jun": 395,
+    "Jul": 426,
+    "Aug": 457,
 }
-forecast_month = "Jul"
+forecast_month = "Aug"
 
 # Config for TFT
 model_config = {

@@ -36,7 +36,6 @@ class CropFusionNetDataset(Dataset):
         self.config = config
         self.mode = mode
         self.scale = scale
-        self.interval = self.config.INTERVAL
         self.seq_len = self.config.model_config.get("seq_length")
         self.parquet_dir = self.config.TIMESERIES_PARQUET_DIR
         self.harvest_next_year = self.config.HARVEST_NEXT_YEAR
@@ -274,15 +273,6 @@ class CropFusionNetDataset(Dataset):
             | (timeseries_data["date"] > harvest_date),
             self.config.remote_sensing_features,
         ] = np.nan
-
-        # Resample and average the timeseries into intervals
-        if self.interval:
-            timeseries_data = (
-                timeseries_data.set_index("date")
-                .resample(self.interval)
-                .mean()
-                .reset_index()
-            )
 
         # Extract real-valued features
         time_varying_real = timeseries_data[self.config.time_varying_real].values

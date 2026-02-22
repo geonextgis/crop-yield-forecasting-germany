@@ -312,6 +312,46 @@ class VariableSelectionNetwork(nn.Module):
         return outputs, sparse_weights
 
 
+class MultiScaleTemporalConv(nn.Module):
+    """Lightweight multi-scale 1D convolution block for extracting local temporal patterns."""
+
+    def __init__(self, hidden_size, dropout=0.1):
+        super().__init__()
+        self.conv3 = nn.Conv1d(
+            hidden_size, hidden_size, kernel_size=3, padding=1, groups=hidden_size
+        )
+        self.conv5 = nn.Conv1d(
+            hidden_size, hidden_size, kernel_size=5, padding=2, groups=hidden_size
+        )
+        self.conv7 = nn.Conv1d(
+            hidden_size, hidden_size, kernel_size=7, padding=3, groups=hidden_size
+        )
+        self.projection = nn.Linear(hidden_size * 3, hidden_size)
+        self.norm = nn.LayerNorm(hidden_size)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x, mask=None):
+        """
+        Args:
+            x: (B, T, F)
+            mask: (B, T) — 1 for valid, 0 for padding
+        """
+        residual = x
+        x_t = x.permute(0, 2, 1)  # (B, F, T)
+
+        if mask is not None:
+            x_t = x_t * mask.unsqueeze(1)  # zero out padded positions
+
+        c3 = self.conv3(x_t).permute(0, 2, 1)
+        c5 = self.conv5(x_t).permute(0, 2, 1)
+        c7 = self.conv7(x_t).permute(0, 2, 1)
+
+        multi_scale = torch.cat([c3, c5, c7], dim=-1)  # (B, T, 3F)
+        out = self.projection(multi_scale)  # (B, T, F)
+        out = self.dropout(out)
+        return self.norm(out + residual)
+
+
 class PositionalEncoder(nn.Module):
     """
     Adds sinusoidal positional encodings to input embeddings so the model
@@ -354,10 +394,10 @@ class PositionalEncoder(nn.Module):
         return x
 
 
-class MultiHeadPooling(nn.Module):
+class DynamicPyramidalPooling(nn.Module):
     """
-    Multi-head attention pooling with Vectorized Attention and
-    Dynamic Pyramidal Fusion.
+    Compresses temporal sequences into a fixed-size representation using
+    multi-head attention and dynamic pyramidal fusion.
     """
 
     def __init__(self, input_dim, num_heads=4, dropout=0.1):
@@ -523,6 +563,8 @@ class CropFusionNet(nn.Module):
             self.hidden_size,
         )
 
+        self.temporal_conv = MultiScaleTemporalConv(self.hidden_size, self.dropout)
+
         # -------------------- 4. Sequence Processing --------------------
         self.lstm = nn.LSTM(
             input_size=self.hidden_size,
@@ -531,6 +573,14 @@ class CropFusionNet(nn.Module):
             dropout=self.dropout if self.lstm_layers > 1 else 0,
             batch_first=True,
             bidirectional=False,
+        )
+
+        # Static-to-LSTM state initialization
+        self.static_to_h = nn.Linear(
+            self.hidden_size, self.hidden_size * self.lstm_layers
+        )
+        self.static_to_c = nn.Linear(
+            self.hidden_size, self.hidden_size * self.lstm_layers
         )
 
         # Post-LSTM Gate & Norm
@@ -554,7 +604,7 @@ class CropFusionNet(nn.Module):
         self.post_attn_norm = nn.LayerNorm(self.hidden_size)
 
         # -------------------- 5. Pooling Mechanism --------------------
-        self.multihead_pooling = MultiHeadPooling(
+        self.pyramidal_pooling = DynamicPyramidalPooling(
             self.hidden_size, self.pooling_heads, self.dropout
         )
 
@@ -667,9 +717,26 @@ class CropFusionNet(nn.Module):
             valid_mask=valid_mask.to(self.device) if valid_mask is not None else None,
         )
 
+        temporal_features = self.temporal_conv(temporal_features, valid_mask)
+
         # 3. LSTM Processing
         # ---------------------------------------------------------
-        lstm_output, _ = self.lstm(temporal_features)
+        # Initialize LSTM states from static context
+        batch_size = temporal_features.size(0)
+        h0 = self.static_to_h(static_embedding)  # (B, hidden * layers)
+        h0 = (
+            h0.view(batch_size, self.lstm_layers, self.hidden_size)
+            .permute(1, 0, 2)
+            .contiguous()
+        )
+        c0 = self.static_to_c(static_embedding)
+        c0 = (
+            c0.view(batch_size, self.lstm_layers, self.hidden_size)
+            .permute(1, 0, 2)
+            .contiguous()
+        )
+
+        lstm_output, _ = self.lstm(temporal_features, (h0, c0))
 
         # Skip connection & Gating
         lstm_output = self.post_lstm_gate(lstm_output + temporal_features)
@@ -697,7 +764,7 @@ class CropFusionNet(nn.Module):
 
         # 5. Pooling & Output
         # ---------------------------------------------------------
-        pooled_output, pooled_weights = self.multihead_pooling(
+        pooled_output, pooled_weights = self.pyramidal_pooling(
             attn_output, ~valid_mask.bool()
         )
         projected = self.output_projection(pooled_output)

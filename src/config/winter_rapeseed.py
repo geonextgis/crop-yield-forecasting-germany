@@ -3,7 +3,7 @@ import os
 
 import torch
 
-CROP = "winter_wheat"
+CROP = "winter_rapeseed"
 HARVEST_NEXT_YEAR = True
 
 ROOT_DATA_DIR = os.path.join(
@@ -51,12 +51,11 @@ device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # Define forecasting scenarios
 forecast_scenarios = {
-    "Mar": 274,
-    "Apr": 304,
-    "May": 335,
-    "Jun": 365,
-    "Jul": 396,
-    "Aug": 427,
+    "Mar": 335,
+    "Apr": 365,
+    "May": 396,
+    "Jun": 426,
+    "Jul": 457,
 }
 forecast_month = "Jul"
 
