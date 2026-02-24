@@ -171,6 +171,7 @@ checkpoints/
 test/
 optimization/
 slurm_logs/
+forecast/
 *.sh
 *.txt
 *.out

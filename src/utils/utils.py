@@ -1,10 +1,15 @@
+import json
+import os
+import pickle
+import random
+from datetime import datetime
+
 import numpy as np
 import pandas as pd
-from datetime import datetime
-from tqdm import tqdm
-from joblib import Parallel, delayed
-import random
 import torch
+from joblib import Parallel, delayed
+from tqdm import tqdm
+
 
 def set_seed(seed=42):
     random.seed(seed)
@@ -35,192 +40,187 @@ def get_start_end_doy(data_path):
         }
     """
     REF_YEAR = 1970  # Non-leap reference year for DOY calculation
-    
+
     # Read phenology data
     phenology_df = pd.read_csv(data_path)
-    
+
     # Rename columns for clarity
     phenology_df.rename(
         columns={
-            'Sowing_DOY': 'Sowing_DATE',
-            'Flowering_DOY': 'Flowering_DATE',
-            'Harvest_DOY': 'Harvest_DATE'
+            "Sowing_DOY": "Sowing_DATE",
+            "Flowering_DOY": "Flowering_DATE",
+            "Harvest_DOY": "Harvest_DATE",
         },
-        inplace=True
+        inplace=True,
     )
-    
+
     # Get earliest sowing month and latest harvest month
-    sow_month = pd.to_datetime(phenology_df['Sowing_DATE']).dt.month.min()
-    harvest_month = pd.to_datetime(phenology_df['Harvest_DATE']).dt.month.max()
+    sow_month = pd.to_datetime(phenology_df["Sowing_DATE"]).dt.month.min()
+    harvest_month = pd.to_datetime(phenology_df["Harvest_DATE"]).dt.month.max()
 
     # Convert months to DOY
     sow_doy = datetime(REF_YEAR, sow_month, 1).timetuple().tm_yday
     harvest_doy = datetime(REF_YEAR, harvest_month, 31).timetuple().tm_yday
-    
+
     # Build DOY window, handling year wrap-around
     if harvest_doy < sow_doy:
         window_doys = list(range(sow_doy, 366)) + list(range(1, harvest_doy + 1))
     else:
         window_doys = list(range(sow_doy, harvest_doy + 1))
-    
+
     return {
-        'sow_month_start_doy': sow_doy,
-        'harvest_month_end_doy': harvest_doy,
-        'window_length_in_days': len(window_doys),
-        'window_doys': window_doys
+        "sow_month_start_doy": sow_doy,
+        "harvest_month_end_doy": harvest_doy,
+        "window_length_in_days": len(window_doys),
+        "window_doys": window_doys,
     }
 
 
-def compute_dataset_scaler(
-    dataset,
-    time_varying_real,
-    static_real_variables,
-    precision=6,
-    n_jobs=8,
+# Function to save model outputs
+def save_outputs(output_dict, output_dir, dataset_type):
+    """
+    Save model outputs (entire output_dict and targets) to a pickle file.
+
+    Args:
+        output_dict (dict): Output dictionary from the model.
+        output_dir (str): Directory to save the outputs.
+        dataset_type (str): Type of dataset (train, validation, test).
+    """
+    os.makedirs(output_dir, exist_ok=True)
+    output_file = os.path.join(output_dir, f"{dataset_type}_outputs.pkl")
+    with open(output_file, "wb") as f:
+        pickle.dump(output_dict, f)
+    print(f"✅ {dataset_type.capitalize()} outputs saved to {output_file}")
+
+
+# Function to evaluate the model and save outputs
+def evaluate_and_save_outputs(
+    model,
+    data_loader,
+    criterion,
+    device,
+    output_dir,
+    dataset_type,
 ):
     """
-    Compute mean and std for:
-      - Time-varying real variables (scaled efficiently across all timesteps)
-      - Static real variables (computed directly)
-      
-    Categorical variables and indices (e.g., day, month) are ignored.
+    Evaluate the model and save:
+        - predictions
+        - targets
+        - metadata (NUTS_ID, year)
+        - any additional weights returned by model
 
-    Parameters
-    ----------
-    dataset : torch.utils.data.Dataset or list
-        Dataset returning dicts with keys: ['inputs', 'identifier']
-    time_varying_real : list of str
-        Names of real-valued time-varying features.
-    static_real_variables : list of str
-        Names of real-valued static features.
-    precision : int, default=6
-        Number of decimal places to keep.
-    n_jobs : int, optional
-        Number of parallel workers (default=8).
-
-    Returns
-    -------
-    dict
-        Mean and std for time-varying and static real features.
+    Saved as pickle (.pkl) file.
     """
 
-    # get one sample to infer shapes
-    sample = None
-    for s in dataset:
-        if s is not None:
-            sample = s
-            break
-    if sample is None:
-        raise ValueError("Dataset is empty or all samples are None.")
+    model.eval()
+    total_loss = 0.0
 
-    x_inputs, x_identifier = sample['inputs'], sample['identifier']
-    n_time_features = x_inputs.shape[1]
-    n_static_features = x_identifier.shape[-1]
+    all_outputs = {}
 
-    # Initialize accumulators
-    sum_time = np.zeros(n_time_features, dtype=np.float64)
-    sumsq_time = np.zeros(n_time_features, dtype=np.float64)
-    count_time = np.zeros(n_time_features, dtype=np.int64)
+    with torch.no_grad():
+        for batch in tqdm(data_loader, desc=f"Evaluating {dataset_type}"):
 
-    sum_static = np.zeros(n_static_features, dtype=np.float64)
-    sumsq_static = np.zeros(n_static_features, dtype=np.float64)
-    count_static = np.zeros(n_static_features, dtype=np.int64)
+            # ---------------------
+            # Prepare inputs
+            # ---------------------
+            inputs = {
+                "inputs": batch["inputs"].to(device),
+                "identifier": batch["identifier"].to(device),
+                "mask": batch["mask"].to(device),
+                "variable_mask": (
+                    batch.get("variable_mask").to(device)
+                    if batch.get("variable_mask") is not None
+                    else None
+                ),
+            }
 
-    # --- Parallel worker for time-varying features only ---
-    def process_one(i):
-        sample = dataset[i]
-        if sample is None:
-            return None
+            batch_targets = batch["target"].to(device)
 
-        x_inputs = np.asarray(sample['inputs'], dtype=np.float64)
-        x_identifier = np.asarray(sample['identifier'], dtype=np.float64).reshape(-1)
+            # ---------------------
+            # Forward pass
+            # ---------------------
+            output_dict = model(inputs)
+            batch_preds = output_dict["prediction"]
 
-        # time-varying real variables only
-        mask_time = ~np.isnan(x_inputs)
-        valid_count_time = mask_time.sum(axis=0)
-        valid_sum_time = np.nansum(x_inputs, axis=0)
-        valid_sumsq_time = np.nansum(x_inputs ** 2, axis=0)
+            # ---------------------
+            # Loss
+            # ---------------------
+            loss = criterion(batch_preds, batch_targets)
+            total_loss += loss.item()
 
-        # static real variables only
-        mask_static = ~np.isnan(x_identifier)
-        valid_count_static = mask_static.astype(int)
-        valid_sum_static = np.nan_to_num(x_identifier)
-        valid_sumsq_static = np.nan_to_num(x_identifier ** 2)
+            # ---------------------
+            # Store model outputs
+            # ---------------------
+            for key, value in output_dict.items():
 
-        return (
-            valid_sum_time, valid_sumsq_time, valid_count_time,
-            valid_sum_static, valid_sumsq_static, valid_count_static
-        )
+                if key not in all_outputs:
+                    all_outputs[key] = []
 
-    results = Parallel(n_jobs=n_jobs, prefer="threads", verbose=10)(
-        delayed(process_one)(i) for i in tqdm(range(len(dataset)))
-    )
+                if torch.is_tensor(value):
+                    all_outputs[key].append(value.detach().cpu())
+                else:
+                    all_outputs[key].append(value)
 
-    for r in results:
-        if r is None:
+            # ---------------------
+            # Store targets
+            # ---------------------
+            all_outputs.setdefault("target", []).append(batch_targets.detach().cpu())
+
+            # ---------------------
+            # Store metadata
+            # ---------------------
+            all_outputs.setdefault("NUTS_ID", []).extend(batch["NUTS_ID"])
+            all_outputs.setdefault("year", []).extend(batch["year"])
+
+    # -------------------------------------------------
+    # Concatenate tensors
+    # -------------------------------------------------
+    for key, value in all_outputs.items():
+
+        if not isinstance(value, list) or len(value) == 0:
             continue
-        s_t, ss_t, c_t, s_s, ss_s, c_s = r
-        sum_time += s_t
-        sumsq_time += ss_t
-        count_time += c_t
-        sum_static += s_s
-        sumsq_static += ss_s
-        count_static += c_s
 
-    # Compute mean/std
-    mean_time = sum_time / np.maximum(count_time, 1)
-    var_time = (sumsq_time / np.maximum(count_time, 1)) - mean_time ** 2
-    std_time = np.sqrt(np.maximum(var_time, 1e-8))
+        if torch.is_tensor(value[0]):
 
-    mean_static = sum_static / np.maximum(count_static, 1)
-    var_static = (sumsq_static / np.maximum(count_static, 1)) - mean_static ** 2
-    std_static = np.sqrt(np.maximum(var_static, 1e-8))
+            if value[0].dim() == 0:
+                tensor_out = torch.stack(value)
+            else:
+                tensor_out = torch.cat(value, dim=0)
 
-    print(f"✅ Computed scalers for {len(time_varying_real)} time-varying real and {len(static_real_variables)} static real features")
+            # Convert to NumPy for safer pickle storage
+            all_outputs[key] = tensor_out.numpy()
 
-    result = {
-        "time_varying_mean": mean_time[:len(time_varying_real)],
-        "time_varying_std": std_time[:len(time_varying_real)],
-        "static_mean": mean_static[-len(static_real_variables):],
-        "static_std": std_static[-len(static_real_variables):]
+    # -------------------------------------------------
+    # Save as pickle
+    # -------------------------------------------------
+    os.makedirs(output_dir, exist_ok=True)
+    save_path = os.path.join(output_dir, f"{dataset_type}_outputs.pkl")
+
+    with open(save_path, "wb") as f:
+        pickle.dump(all_outputs, f)
+
+    # -------------------------------------------------
+    # Final metrics
+    # -------------------------------------------------
+    avg_loss = total_loss / len(data_loader)
+
+    print(f"{dataset_type.capitalize()} Loss: {avg_loss:.4f}")
+    print(f"Outputs saved to: {save_path}")
+
+    return avg_loss
+
+
+def save_config(train_cfg, model_cfg, output_dir):
+
+    config = {
+        "train_cfg": train_cfg,
+        "model_cfg": model_cfg,
     }
 
-    # Round all arrays to desired precision
-    result = {
-        k: np.round(v, decimals=precision).tolist() for k, v in result.items()
-    }
+    os.makedirs(output_dir, exist_ok=True)
+    save_path = os.path.join(output_dir, "config.json")
 
-    return result
+    with open(save_path, "w") as f:
+        json.dump(config, f, indent=4)
 
-
-def calculate_spatial_variance(pixel_preds):
-    """
-    Calculates the average Standard Deviation of pixel predictions within districts.
-    
-    pixel_preds: (B, num_grids, Q) - Raw predictions
-    """
-    # 1. Select the Median Quantile
-    # If Q=3 (e.g., 0.1, 0.5, 0.9), we want index 1 (0.5 median)
-    # If Q=1, we use index 0
-    q_idx = pixel_preds.shape[-1] // 2 
-    
-    # Shape becomes: (B, num_grids)
-    median_preds = pixel_preds[..., q_idx] 
-
-    batch_stds = []
-    
-    # 2. Loop over the batch
-    # (We loop because each district has a different number of valid pixels)
-    for i in range(median_preds.shape[0]):
-        # Calculate Standard Deviation
-        # We need at least 2 pixels to calculate variance. 
-        # If a district has 1 pixel (or 0), std dev is 0.
-        if median_preds.numel() > 1:
-            std = torch.std(median_preds)
-            batch_stds.append(std)
-        else:
-            # No variance possible for single pixel
-            batch_stds.append(torch.tensor(0.0, device=pixel_preds.device))
-            
-    # 4. Average the std dev across all districts in the batch
-    return torch.stack(batch_stds).mean().item()
+    print(f"Config saved to: {save_path}")

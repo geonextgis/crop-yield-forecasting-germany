@@ -1,4 +1,5 @@
 import argparse
+import importlib
 import json
 import os
 import sys
@@ -8,10 +9,8 @@ import uuid
 source_folder = "/beegfs/halder/GITHUB/RESEARCH/crop-yield-forecasting-germany/src"
 sys.path.append(source_folder)
 
-import config.winter_wheat as cfg
 import numpy as np
 import torch
-from config.winter_wheat import model_config, train_config
 from dataset.dataset import CropFusionNetDataset
 from loss.loss import QuantileLoss
 from models.CropFusionNet.model import CropFusionNet
@@ -21,7 +20,20 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from utils.utils import set_seed
+from utils.utils import evaluate_and_save_outputs, set_seed
+
+
+# Load config
+def load_config(crop_name: str):
+    module_path = f"config.{crop_name}"
+    cfg = importlib.import_module(module_path)
+    model_config, train_config = cfg.model_config, cfg.train_config
+    return cfg, model_config, train_config
+
+
+# Crop
+crop = "winter_rapeseed"
+cfg, model_config, train_config = load_config(crop)
 
 device = model_config["device"]
 set_seed(42)
@@ -48,6 +60,7 @@ def parse_args():
     parser.add_argument("--pooling_heads", type=int, help="Pooling Heads")
     parser.add_argument("--embedding_dim", type=int, help="Embedding Dimension")
     parser.add_argument("--dropout", type=float, help="Dropout Rate")
+    parser.add_argument("--seq_length", type=int, help="Sequence Length")
 
     return parser.parse_args()
 
@@ -208,6 +221,8 @@ if __name__ == "__main__":
         model_config["embedding_dim"] = args.embedding_dim
     if args.dropout:
         model_config["dropout"] = args.dropout
+    if args.seq_length:
+        model_config["seq_length"] = args.seq_length
 
     # Update experiment name
     train_config["exp_name"] = f"{train_config.get('exp_name', 'exp')}_{args.job_id}"
@@ -224,6 +239,7 @@ if __name__ == "__main__":
     # Re-initialize Datasets & Loaders
     train_dataset = CropFusionNetDataset(cfg, mode="train", scale=True)
     val_dataset = CropFusionNetDataset(cfg, mode="val", scale=True)
+    test_dataset = CropFusionNetDataset(cfg, mode="test", scale=True)
 
     train_loader = DataLoader(
         train_dataset,
@@ -237,6 +253,16 @@ if __name__ == "__main__":
 
     val_loader = DataLoader(
         val_dataset,
+        batch_size=train_config["batch_size"],
+        shuffle=False,
+        num_workers=16,
+        pin_memory=True,
+        persistent_workers=True,
+        prefetch_factor=2,
+    )
+
+    test_loader = DataLoader(
+        test_dataset,
         batch_size=train_config["batch_size"],
         shuffle=False,
         num_workers=16,
@@ -278,21 +304,34 @@ if __name__ == "__main__":
         exp_name=train_config["exp_name"],
     )
 
+    # Save the trained model
+    model_save_path = os.path.join(args.output_dir, f"model_{args.job_id}.pt")
+    torch.save(model.state_dict(), model_save_path)
+    print(f"💾 Trained model saved to {model_save_path}")
+
     # ---------------------------------------------------------
-    # 5. SAVE TUNING RESULTS
+    # 5. EVALUATE AND SAVE OUTPUTS
+    # ---------------------------------------------------------
+    print("🔍 Evaluating and saving outputs...")
+
+    # Evaluate and save outputs for train, validation, and test datasets
+    evaluate_and_save_outputs(
+        model, train_loader, criterion, device, args.output_dir, "train"
+    )
+    evaluate_and_save_outputs(
+        model, val_loader, criterion, device, args.output_dir, "validation"
+    )
+    evaluate_and_save_outputs(
+        model, test_loader, criterion, device, args.output_dir, "test"
+    )
+
+    # ---------------------------------------------------------
+    # 6. SAVE TUNING RESULTS
     # ---------------------------------------------------------
     results = {
         "job_id": args.job_id,
-        "config": {
-            "lr": train_config["lr"],
-            "hidden_dim": model_config["lstm_hidden_dimension"],
-            "batch_size": train_config["batch_size"],
-            "lstm_layers": model_config.get("lstm_layers"),
-            "attn_heads": model_config.get("attn_heads"),
-            "pooling_heads": model_config.get("pooling_heads"),
-            "embedding_dim": model_config.get("embedding_dim"),
-            "dropout": model_config.get("dropout"),
-        },
+        "train_config": train_config,
+        "model_config": model_config,
         "metrics": {
             "best_val_loss": best_val_loss,
         },

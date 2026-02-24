@@ -4,23 +4,24 @@ import subprocess
 import uuid
 
 # --- CONFIGURATION ---
-CROP = "winter_wheat"
+CROP = "winter_rapeseed"
+FORECAST_MONTH = "jul"
 NUM_JOBS = 100
 job_name_prefix = f"{CROP}_tuning"
-output_base_dir = f"/beegfs/halder/GITHUB/RESEARCH/crop-yield-forecasting-germany/src/train/optimization/{CROP}"
+output_base_dir = f"/beegfs/halder/GITHUB/RESEARCH/crop-yield-forecasting-germany/src/train/optimization/{CROP}/{FORECAST_MONTH}"
 working_dir = "/beegfs/halder/GITHUB/RESEARCH/crop-yield-forecasting-germany/src/train"
 
 # --- HYPERPARAMETER SEARCH SPACE ---
 # Define the ranges you want to explore
 param_grid = {
     "lr": [1e-3, 1e-4, 1e-5],
-    "batch_size": [16, 32, 64],
+    "batch_size": [32, 64, 128],
     "hidden_dim": [128, 256, 512],
     "lstm_layers": [1, 2, 3],
     "attn_heads": [4, 8, 16],
     "pooling_heads": [4, 8, 16],
     "embedding_dim": [4, 8, 16],
-    "dropout": [0.1, 0.3, 0.5],
+    "dropout": [0.3, 0.4, 0.5],
 }
 
 
@@ -46,7 +47,7 @@ for i in range(NUM_JOBS):
 
     # 3. Construct Python Command
     python_cmd = (
-        f"python train.py "
+        f"python train_CropFusionNet.py "
         f"--job_id {unique_id} "
         f"--output_dir {output_base_dir} "
         f"--lr {params['lr']} "
