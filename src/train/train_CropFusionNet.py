@@ -23,7 +23,7 @@ from tqdm import tqdm
 from utils.utils import evaluate_and_save_outputs, load_config, set_seed
 
 # Crop
-crop = "winter_barley"
+crop = "winter_rapeseed"
 cfg, model_config, train_config = load_config(crop)
 
 device = model_config["device"]

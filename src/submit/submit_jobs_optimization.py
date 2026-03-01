@@ -4,7 +4,7 @@ import subprocess
 import uuid
 
 # --- CONFIGURATION ---
-CROP = "winter_barley"
+CROP = "winter_rapeseed"
 FORECAST_MONTH = "Jul"
 NUM_JOBS = 100
 job_name_prefix = f"{CROP}_tuning"
