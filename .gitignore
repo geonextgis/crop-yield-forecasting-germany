@@ -168,10 +168,10 @@ runs/
 temp/
 others/
 checkpoints/
-test/
 optimization/
 slurm_logs/
 forecast/
+baseline/
 *.sh
 *.txt
 *.out

@@ -57,7 +57,7 @@ forecast_scenarios = {
     "Aug": 243,
     "Sep": 273,
 }
-forecast_month = "Jul"
+forecast_month = "Sep"
 
 # Config for TFT
 model_config = {
@@ -70,9 +70,9 @@ model_config = {
     "time_varying_real_variables": len(time_varying_real),
     "lstm_hidden_dimension": 256,
     "lstm_layers": 2,
-    "attn_heads": 4,
-    "pooling_heads": 8,
-    "dropout": 0.3,
+    "attn_heads": 16,
+    "pooling_heads": 4,
+    "dropout": 0.4,
     "embedding_dim": 16,
     "seq_length": forecast_scenarios[forecast_month],
     "quantiles": [0.1, 0.5, 0.9],
@@ -80,8 +80,8 @@ model_config = {
 
 train_config = {
     "device": device,
-    "batch_size": 32,
-    "lr": 1e-5,
+    "batch_size": 128,
+    "lr": 1e-4,
     "weight_decay": 1e-5,
     "num_epochs": 500,
     "early_stopping_patience": 10,

@@ -1,3 +1,4 @@
+import importlib
 import json
 import os
 import pickle
@@ -224,3 +225,10 @@ def save_config(train_cfg, model_cfg, output_dir):
         json.dump(config, f, indent=4)
 
     print(f"Config saved to: {save_path}")
+
+
+def load_config(crop_name: str):
+    module_path = f"config.{crop_name}"
+    cfg = importlib.import_module(module_path)
+    model_config, train_config = cfg.model_config, cfg.train_config
+    return cfg, model_config, train_config

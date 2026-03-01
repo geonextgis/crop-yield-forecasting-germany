@@ -20,19 +20,10 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from utils.utils import evaluate_and_save_outputs, set_seed
-
-
-# Load config
-def load_config(crop_name: str):
-    module_path = f"config.{crop_name}"
-    cfg = importlib.import_module(module_path)
-    model_config, train_config = cfg.model_config, cfg.train_config
-    return cfg, model_config, train_config
-
+from utils.utils import evaluate_and_save_outputs, load_config, set_seed
 
 # Crop
-crop = "winter_rapeseed"
+crop = "winter_barley"
 cfg, model_config, train_config = load_config(crop)
 
 device = model_config["device"]
@@ -312,18 +303,18 @@ if __name__ == "__main__":
     # ---------------------------------------------------------
     # 5. EVALUATE AND SAVE OUTPUTS
     # ---------------------------------------------------------
-    print("🔍 Evaluating and saving outputs...")
+    # print("🔍 Evaluating and saving outputs...")
 
-    # Evaluate and save outputs for train, validation, and test datasets
-    evaluate_and_save_outputs(
-        model, train_loader, criterion, device, args.output_dir, "train"
-    )
-    evaluate_and_save_outputs(
-        model, val_loader, criterion, device, args.output_dir, "validation"
-    )
-    evaluate_and_save_outputs(
-        model, test_loader, criterion, device, args.output_dir, "test"
-    )
+    # # Evaluate and save outputs for train, validation, and test datasets
+    # evaluate_and_save_outputs(
+    #     model, train_loader, criterion, device, args.output_dir, "train"
+    # )
+    # evaluate_and_save_outputs(
+    #     model, val_loader, criterion, device, args.output_dir, "validation"
+    # )
+    # evaluate_and_save_outputs(
+    #     model, test_loader, criterion, device, args.output_dir, "test"
+    # )
 
     # ---------------------------------------------------------
     # 6. SAVE TUNING RESULTS

@@ -4,8 +4,8 @@ import subprocess
 import uuid
 
 # --- CONFIGURATION ---
-CROP = "winter_rapeseed"
-FORECAST_MONTH = "jul"
+CROP = "winter_barley"
+FORECAST_MONTH = "Jul"
 NUM_JOBS = 100
 job_name_prefix = f"{CROP}_tuning"
 output_base_dir = f"/beegfs/halder/GITHUB/RESEARCH/crop-yield-forecasting-germany/src/train/optimization/{CROP}/{FORECAST_MONTH}"
