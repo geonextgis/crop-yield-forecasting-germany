@@ -776,4 +776,5 @@ class CropFusionNet(nn.Module):
             "temporal_weights": temporal_weights,
             "attention_weights": self_attn_weights,
             "pooled_weights": pooled_weights,
+            "latent": pooled_output,  # (B, hidden_size) — pre-projection fusion repr.
         }
